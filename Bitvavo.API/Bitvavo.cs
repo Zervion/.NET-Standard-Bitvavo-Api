@@ -68,7 +68,7 @@
         /// </summary>
         /// <param name="options">The options.</param>
         /// <returns></returns>
-        private string CreatePostfix(JObject options)
+        private static string CreatePostfix(JObject options)
         {
             var keys = options
                 .Properties()
@@ -79,12 +79,7 @@
                 .Select(key => $"{key}={options.GetValue(key)}")
                 .ToList();
 
-            var parameters = string.Join("&", array);
-            if (keys.First())
-            {
-                parameters = "?" + parameters;
-            }
-            return parameters;
+            return $"?{string.Join("&", array)}";
         }
 
         /// <summary>
@@ -270,20 +265,20 @@
                 using var reader = new StreamReader(myHttpWebResponse.GetResponseStream());
                 if (responseCode == 200)
                 {
-                    this.UpdateRateLimit(myHttpWebResponse.Headers);
+                    UpdateRateLimit(myHttpWebResponse.Headers);
                 }
 
                 var responseFromServer = reader.ReadToEnd();
                 var response = JObject.Parse(responseFromServer);
                 if (responseFromServer.Contains("errorCode"))
                 {
-                    this.ErrorRateLimit(response);
+                    ErrorRateLimit(response);
                 }
                 return response;
             }
             catch (Exception ex)
             {
-                ErrorToConsole("Caught exception in privateRequest " + ex);
+                ErrorToConsole("Caught exception in PrivateRequest " + ex);
                 return new JObject();
             }
         }
@@ -338,7 +333,7 @@
             }
             catch (Exception ex)
             {
-                ErrorToConsole("Caught exception in privateRequest " + ex);
+                ErrorToConsole("Caught exception in PrivateRequest " + ex);
                 return new JArray();
             }
         }
@@ -445,47 +440,33 @@
         /// <returns></returns>
         public JObject Time()
         {
-            return PublicRequest((this.ApiUri + "/time"), "GET", new JObject());
+            return PublicRequest((ApiUri + "/time"), "GET", new JObject());
         }
 
-        /**
- * Returns the available markets
- * @param options optional parameters: market
- * @return JArray response, get markets by iterating over array: response.get(index)
- */
+        /// <summary>
+        /// Markets the specified options.
+        /// </summary>
+        /// <param name="options">The options.</param>
+        /// <returns></returns>
         public JArray Markets(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            if (options.has("market"))
-            {
-                JArray returnArray = new JArray();
-                returnArray.put(PublicRequest((this.ApiUri + "/markets" + postfix), "GET", new JObject()));
-                return returnArray;
-            }
-            else
-            {
-                return PublicRequestArray((this.ApiUri + "/markets" + postfix), "GET", new JObject());
-            }
+            var postfix = CreatePostfix(options);
+            return options.ContainsKey("market")
+                       ? new JArray(PublicRequest((ApiUri + "/markets" + postfix), "GET", new JObject()))
+                       : PublicRequestArray((ApiUri + "/markets" + postfix), "GET", new JObject());
         }
 
-        /**
-         * Returns the available assets
-         * @param options optional parameters: symbol
-         * @return JArray response, get assets by iterating over array response.get(index)
-         */
+        /// <summary>
+        /// Assetses the specified options.
+        /// </summary>
+        /// <param name="options">The options.</param>
+        /// <returns></returns>
         public JArray Assets(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            if (options.has("symbol"))
-            {
-                JArray returnArray = new JArray();
-                returnArray.put(PublicRequest((this.ApiUri + "/assets" + postfix), "GET", new JObject()));
-                return returnArray;
-            }
-            else
-            {
-                return PublicRequestArray((this.ApiUri + "/assets" + postfix), "GET", new JObject());
-            }
+            var postfix = CreatePostfix(options);
+            return options.ContainsKey("symbol")
+                       ? new JArray(PublicRequest((ApiUri + "/assets" + postfix), "GET", new JObject()))
+                       : PublicRequestArray((ApiUri + "/assets" + postfix), "GET", new JObject());
         }
 
         /**
@@ -496,8 +477,8 @@
          */
         public JObject Book(string market, JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return PublicRequest((this.ApiUri + "/" + market + "/book" + postfix), "GET", new JObject());
+            var postfix = CreatePostfix(options);
+            return PublicRequest((ApiUri + "/" + market + "/book" + postfix), "GET", new JObject());
         }
 
         /**
@@ -508,8 +489,8 @@
          */
         public JArray PublicTrades(string market, JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return PublicRequestArray((this.ApiUri + "/" + market + "/trades" + postfix), "GET", new JObject());
+            var postfix = CreatePostfix(options);
+            return PublicRequestArray((ApiUri + "/" + market + "/trades" + postfix), "GET", new JObject());
         }
 
         /**
@@ -521,9 +502,9 @@
          */
         public JArray Candles(string market, string interval, JObject options)
         {
-            options.put("interval", interval);
-            string postfix = CreatePostfix(options);
-            return PublicRequestArray((this.ApiUri + "/" + market + "/candles" + postfix), "GET", new JObject());
+            options.Add("interval", interval);
+            var postfix = CreatePostfix(options);
+            return PublicRequestArray((ApiUri + "/" + market + "/candles" + postfix), "GET", new JObject());
         }
 
         /**
@@ -533,16 +514,16 @@
          */
         public JArray TickerPrice(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            if (options.has("market"))
+            var postfix = CreatePostfix(options);
+            if (options.ContainsKey("market"))
             {
-                JArray returnArray = new JArray();
-                returnArray.put(PublicRequest((this.ApiUri + "/ticker/price" + postfix), "GET", new JObject()));
+                var returnArray = new JArray();
+                returnArray.Add(PublicRequest((ApiUri + "/ticker/price" + postfix), "GET", new JObject()));
                 return returnArray;
             }
             else
             {
-                return PublicRequestArray((this.ApiUri + "/ticker/price" + postfix), "GET", new JObject());
+                return PublicRequestArray((ApiUri + "/ticker/price" + postfix), "GET", new JObject());
             }
         }
 
@@ -553,16 +534,16 @@
          */
         public JArray TickerBook(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            if (options.has("market"))
+            var postfix = CreatePostfix(options);
+            if (options.ContainsKey("market"))
             {
-                JArray returnArray = new JArray();
-                returnArray.put(PublicRequest((this.ApiUri + "/ticker/book" + postfix), "GET", new JObject()));
+                var returnArray = new JArray();
+                returnArray.Add(PublicRequest((ApiUri + "/ticker/book" + postfix), "GET", new JObject()));
                 return returnArray;
             }
             else
             {
-                return PublicRequestArray((this.ApiUri + "/ticker/book" + postfix), "GET", new JObject());
+                return PublicRequestArray((ApiUri + "/ticker/book" + postfix), "GET", new JObject());
             }
         }
 
@@ -573,16 +554,16 @@
          */
         public JArray Ticker24H(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            if (options.has("market"))
+            var postfix = CreatePostfix(options);
+            if (options.ContainsKey("market"))
             {
-                JArray returnArray = new JArray();
-                returnArray.put(PublicRequest((this.ApiUri + "/ticker/24h" + postfix), "GET", new JObject()));
+                var returnArray = new JArray();
+                returnArray.Add(PublicRequest((ApiUri + "/ticker/24h" + postfix), "GET", new JObject()));
                 return returnArray;
             }
             else
             {
-                return PublicRequestArray((this.ApiUri + "/ticker/24h" + postfix), "GET", new JObject());
+                return PublicRequestArray((ApiUri + "/ticker/24h" + postfix), "GET", new JObject());
             }
         }
 
@@ -599,10 +580,10 @@
          */
         public JObject PlaceOrder(string market, string side, string orderType, JObject body)
         {
-            body.put("market", market);
-            body.put("side", side);
-            body.put("orderType", orderType);
-            return privateRequest("/order", "", "POST", body);
+            body.Add("market", market);
+            body.Add("side", side);
+            body.Add("orderType", orderType);
+            return PrivateRequest("/order", "", "POST", body);
         }
 
         /**
@@ -613,11 +594,11 @@
          */
         public JObject GetOrder(string market, string orderId)
         {
-            JObject options = new JObject();
-            options.put("market", market);
-            options.put("orderId", orderId);
-            string postfix = CreatePostfix(options);
-            return privateRequest("/order", postfix, "GET", new JObject());
+            var options = new JObject();
+            options.Add("market", market);
+            options.Add("orderId", orderId);
+            var postfix = CreatePostfix(options);
+            return PrivateRequest("/order", postfix, "GET", new JObject());
         }
 
         /**
@@ -631,9 +612,9 @@
          */
         public JObject UpdateOrder(string market, string orderId, JObject body)
         {
-            body.put("market", market);
-            body.put("orderId", orderId);
-            return privateRequest("/order", "", "PUT", body);
+            body.Add("market", market);
+            body.Add("orderId", orderId);
+            return PrivateRequest("/order", "", "PUT", body);
         }
 
         /**
@@ -644,11 +625,11 @@
          */
         public JObject CancelOrder(string market, string orderId)
         {
-            JObject options = new JObject();
-            options.put("market", market);
-            options.put("orderId", orderId);
-            string postfix = CreatePostfix(options);
-            return privateRequest("/order", postfix, "DELETE", new JObject());
+            var options = new JObject();
+            options.Add("market", market);
+            options.Add("orderId", orderId);
+            var postfix = CreatePostfix(options);
+            return PrivateRequest("/order", postfix, "DELETE", new JObject());
         }
 
         /**
@@ -659,9 +640,9 @@
          */
         public JArray GetOrders(string market, JObject options)
         {
-            options.put("market", market);
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/orders", postfix, "GET", new JObject());
+            options.Add("market", market);
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/orders", postfix, "GET", new JObject());
         }
 
         /**
@@ -671,8 +652,8 @@
          */
         public JArray CancelOrders(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/orders", postfix, "DELETE", new JObject());
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/orders", postfix, "DELETE", new JObject());
         }
 
         /**
@@ -682,8 +663,8 @@
          */
         public JArray OrdersOpen(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/ordersOpen", postfix, "GET", new JObject());
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/ordersOpen", postfix, "GET", new JObject());
         }
 
         /**
@@ -694,9 +675,9 @@
          */
         public JArray Trades(string market, JObject options)
         {
-            options.put("market", market);
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/trades", postfix, "GET", new JObject());
+            options.Add("market", market);
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/trades", postfix, "GET", new JObject());
         }
 
         /**
@@ -705,7 +686,7 @@
          */
         public JObject Account()
         {
-            return privateRequest("/account", "", "GET", new JObject());
+            return PrivateRequest("/account", "", "GET", new JObject());
         }
 
         /**
@@ -715,8 +696,8 @@
          */
         public JArray Balance(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/balance", postfix, "GET", new JObject());
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/balance", postfix, "GET", new JObject());
         }
 
         /**
@@ -726,10 +707,10 @@
          */
         public JObject DepositAssets(string symbol)
         {
-            JObject options = new JObject();
-            options.put("symbol", symbol);
-            string postfix = CreatePostfix(options);
-            return privateRequest("/deposit", postfix, "GET", new JObject());
+            var options = new JObject();
+            options.Add("symbol", symbol);
+            var postfix = CreatePostfix(options);
+            return PrivateRequest("/deposit", postfix, "GET", new JObject());
         }
 
         /**
@@ -742,10 +723,10 @@
          */
         public JObject WithdrawAssets(string symbol, string amount, string address, JObject body)
         {
-            body.put("symbol", symbol);
-            body.put("amount", amount);
-            body.put("address", address);
-            return privateRequest("/withdrawal", "", "POST", body);
+            body.Add("symbol", symbol);
+            body.Add("amount", amount);
+            body.Add("address", address);
+            return PrivateRequest("/withdrawal", "", "POST", body);
         }
 
         /**
@@ -755,8 +736,8 @@
          */
         public JArray DepositHistory(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/depositHistory", postfix, "GET", new JObject());
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/depositHistory", postfix, "GET", new JObject());
         }
 
         /**
@@ -766,8 +747,8 @@
          */
         public JArray WithdrawalHistory(JObject options)
         {
-            string postfix = CreatePostfix(options);
-            return privateRequestArray("/withdrawalHistory", postfix, "GET", new JObject());
+            var postfix = CreatePostfix(options);
+            return PrivateRequestArray("/withdrawalHistory", postfix, "GET", new JObject());
         }
 
         /**
@@ -780,112 +761,67 @@
             return websocketObject;
         }
 
-        public class Websocket
+        void HandleBook(Runnable function)
         {
-            public Websocket()
+            function.run();
+        }
+
+        public void Close()
+        {
+            ws.closeSocket();
+        }
+
+        public void DoSendPublic(JObject options)
+        {
+            ws.sendMessage(options.toString());
+        }
+
+        public void DoSendPrivate(JObject options)
+        {
+            if (string.IsNullOrEmpty(ApiKey) || string.IsNullOrEmpty(ApiSecret))
+            {
+                ErrorToConsole("You forgot to set the key and secret, both are required for this functionality.");
+            }
+            else if (authenticated)
+            {
+                ws.sendMessage(options.toString());
+            }
+            else
             {
                 try
                 {
-                    final WebsocketClientEndpoint clientEndPoint = new WebsocketClientEndpoint(new URI(Bitvavo.this.wsUrl), Bitvavo.this);
-                    clientEndPoint.addAuthenticateHandler(new WebsocketClientEndpoint.MessageHandler()
-                    {
-          public void handleMessage(JObject response)
-                    {
-                        if (response.has("authenticated"))
-                        {
-                            authenticated = true;
-                            debugToConsole("We registered authenticated as true");
-                        }
-                    }
-                });
-                clientEndPoint.addMessageHandler(new WebsocketClientEndpoint.MessageHandler()
-                {
-          public void handleMessage(JObject response)
-                {
-                    errorToConsole("Unexpected message: " + response);
+                    Thread.Sleep(50);
+                    DoSendPrivate(options);
                 }
-            });
-        ws = clientEndPoint;
-        Book = new HashMap<string, object>();
-        KeepAliveThread keepAliveThread = new KeepAliveThread();
-            keepAliveThread.start();
-        Bitvavo.this.keepAliveThread = keepAliveThread;
-      }
-      catch(Exception ex) {
-        errorToConsole("Caught exception in websocket: " + ex);
-    }
-}
-
-void HandleBook(Runnable function)
-{
-    function.run();
-}
-
-public void Close()
-{
-    ws.closeSocket();
-}
-
-public void DoSendPublic(JObject options)
-{
-    ws.sendMessage(options.toString());
-}
-
-public void DoSendPrivate(JObject options)
-{
-    if (getApiKey() == null)
-    {
-        errorToConsole("You forgot to set the key and secret, both are required for this functionality.");
-    }
-    else if (authenticated)
-    {
-        ws.sendMessage(options.toString());
-    }
-    else
-    {
-        try
-        {
-            TimeUnit.MILLISECONDS.sleep(50);
-            DoSendPrivate(options);
+                catch (ThreadInterruptedException)
+                {
+                    ErrorToConsole("Interrupted, aborting send.");
+                }
+            }
         }
-        catch (InterruptedException ex)
+
+        public void SetErrorCallback(WebsocketClientEndpoint.MessageHandler msgHandler)
         {
-            errorToConsole("Interrupted, aborting send.");
+            ws.addErrorHandler(msgHandler);
         }
-    }
-}
 
-/**
- * Sets the callback for errors
- * @param msgHandler callback
- */
-public void SetErrorCallback(WebsocketClientEndpoint.MessageHandler msgHandler)
-{
-    ws.addErrorHandler(msgHandler);
-}
+        public void Time(WebsocketClientEndpoint.MessageHandler msgHandler)
+        {
+            ws.addTimeHandler(msgHandler);
+            DoSendPublic(new JObject("{ action: getTime }"));
+        }
 
-/**
-* Returns the current time in unix timestamp (milliseconds since 1 jan 1970).
-*@param msgHandler callback
-* @return JObject response, get time through response.getJObject("response").getLong("time")
-*/
-public void Time(WebsocketClientEndpoint.MessageHandler msgHandler)
-{
-    ws.addTimeHandler(msgHandler);
-    DoSendPublic(new JObject("{ action: getTime }"));
-}
-
-public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
+        public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addMarketsHandler(msgHandler);
-            options.put("action", "getMarkets");
+            options.Add("action", "getMarkets");
             DoSendPublic(options);
         }
 
         public void Assets(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addAssetsHandler(msgHandler);
-            options.put("action", "getAssets");
+            options.Add("action", "getAssets");
             DoSendPublic(options);
         }
 
@@ -893,8 +829,8 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void Book(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addBookHandler(msgHandler);
-            options.put("action", "getBook");
-            options.put("market", market);
+            options.Add("action", "getBook");
+            options.Add("market", market);
             DoSendPublic(options);
         }
 
@@ -902,8 +838,8 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void PublicTrades(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addTradesHandler(msgHandler);
-            options.put("action", "getTrades");
-            options.put("market", market);
+            options.Add("action", "getTrades");
+            options.Add("market", market);
             DoSendPublic(options);
         }
 
@@ -911,9 +847,9 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void Candles(string market, string interval, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addCandlesHandler(msgHandler);
-            options.put("action", "getCandles");
-            options.put("market", market);
-            options.put("interval", interval);
+            options.Add("action", "getCandles");
+            options.Add("market", market);
+            options.Add("interval", interval);
             DoSendPublic(options);
         }
 
@@ -921,7 +857,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void Ticker24H(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addTicker24hHandler(msgHandler);
-            options.put("action", "getTicker24h");
+            options.Add("action", "getTicker24h");
             DoSendPublic(options);
         }
 
@@ -929,7 +865,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void TickerPrice(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addTickerPriceHandler(msgHandler);
-            options.put("action", "getTickerPrice");
+            options.Add("action", "getTickerPrice");
             DoSendPublic(options);
         }
 
@@ -937,7 +873,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void TickerBook(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addTickerBookHandler(msgHandler);
-            options.put("action", "getTickerBook");
+            options.Add("action", "getTickerBook");
             DoSendPublic(options);
         }
 
@@ -945,10 +881,10 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void PlaceOrder(string market, string side, string orderType, JObject body, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addPlaceOrderHandler(msgHandler);
-            body.put("market", market);
-            body.put("side", side);
-            body.put("orderType", orderType);
-            body.put("action", "privateCreateOrder");
+            body.Add("market", market);
+            body.Add("side", side);
+            body.Add("orderType", orderType);
+            body.Add("action", "privateCreateOrder");
             DoSendPrivate(body);
         }
 
@@ -956,10 +892,10 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void GetOrder(string market, string orderId, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addGetOrderHandler(msgHandler);
-            JObject options = new JObject();
-            options.put("action", "privateGetOrder");
-            options.put("market", market);
-            options.put("orderId", orderId);
+            var options = new JObject();
+            options.Add("action", "privateGetOrder");
+            options.Add("market", market);
+            options.Add("orderId", orderId);
             DoSendPrivate(options);
         }
 
@@ -967,9 +903,9 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void UpdateOrder(string market, string orderId, JObject body, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addUpdateOrderHandler(msgHandler);
-            body.put("market", market);
-            body.put("orderId", orderId);
-            body.put("action", "privateUpdateOrder");
+            body.Add("market", market);
+            body.Add("orderId", orderId);
+            body.Add("action", "privateUpdateOrder");
             DoSendPrivate(body);
         }
 
@@ -977,10 +913,10 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void CancelOrder(string market, string orderId, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addCancelOrderHandler(msgHandler);
-            JObject options = new JObject();
-            options.put("action", "privateCancelOrder");
-            options.put("market", market);
-            options.put("orderId", orderId);
+            var options = new JObject();
+            options.Add("action", "privateCancelOrder");
+            options.Add("market", market);
+            options.Add("orderId", orderId);
             DoSendPrivate(options);
         }
 
@@ -988,8 +924,8 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void GetOrders(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addGetOrdersHandler(msgHandler);
-            options.put("action", "privateGetOrders");
-            options.put("market", market);
+            options.Add("action", "privateGetOrders");
+            options.Add("market", market);
             DoSendPrivate(options);
         }
 
@@ -997,7 +933,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void CancelOrders(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addCancelOrdersHandler(msgHandler);
-            options.put("action", "privateCancelOrders");
+            options.Add("action", "privateCancelOrders");
             DoSendPrivate(options);
         }
 
@@ -1005,7 +941,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void OrdersOpen(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addGetOrdersOpenHandler(msgHandler);
-            options.put("action", "privateGetOrdersOpen");
+            options.Add("action", "privateGetOrdersOpen");
             DoSendPrivate(options);
         }
 
@@ -1013,8 +949,8 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void Trades(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addGetTradesHandler(msgHandler);
-            options.put("action", "privateGetTrades");
-            options.put("market", market);
+            options.Add("action", "privateGetTrades");
+            options.Add("market", market);
             DoSendPrivate(options);
         }
 
@@ -1022,7 +958,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void Account(WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addAccountHandler(msgHandler);
-            JObject options = new JObject("{ action: privateGetAccount }");
+            var options = new JObject("{ action: privateGetAccount }");
             DoSendPrivate(options);
         }
 
@@ -1030,7 +966,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void Balance(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addBalanceHandler(msgHandler);
-            options.put("action", "privateGetBalance");
+            options.Add("action", "privateGetBalance");
             DoSendPrivate(options);
         }
 
@@ -1038,8 +974,8 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void DepositAssets(string symbol, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addDepositAssetsHandler(msgHandler);
-            JObject options = new JObject("{ action: privateDepositAssets }");
-            options.put("symbol", symbol);
+            var options = new JObject("{ action: privateDepositAssets }");
+            options.Add("symbol", symbol);
             DoSendPrivate(options);
         }
 
@@ -1047,10 +983,10 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void WithdrawAssets(string symbol, string amount, string address, JObject body, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addWithdrawAssetsHandler(msgHandler);
-            body.put("action", "privateWithdrawAssets");
-            body.put("symbol", symbol);
-            body.put("amount", amount);
-            body.put("address", address);
+            body.Add("action", "privateWithdrawAssets");
+            body.Add("symbol", symbol);
+            body.Add("amount", amount);
+            body.Add("address", address);
             DoSendPrivate(body);
         }
 
@@ -1058,7 +994,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void DepositHistory(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addDepositHistoryHandler(msgHandler);
-            options.put("action", "privateGetDepositHistory");
+            options.Add("action", "privateGetDepositHistory");
             DoSendPrivate(options);
         }
 
@@ -1066,7 +1002,7 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void WithdrawalHistory(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addWithdrawalHistoryHandler(msgHandler);
-            options.put("action", "privateGetWithdrawalHistory");
+            options.Add("action", "privateGetWithdrawalHistory");
             DoSendPrivate(options);
         }
 
@@ -1074,18 +1010,18 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void SubscriptionTicker(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addSubscriptionTickerHandler(market, msgHandler);
-            JObject options = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "ticker");
-            subOptions.put("markets", new string[] { market });
-            options.put("action", "subscribe");
-            options.put("channels", new JObject[] { subOptions });
+            var options = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "ticker");
+            subOptions.Add("markets", new string[] { market });
+            options.Add("action", "subscribe");
+            options.Add("channels", new JObject[] { subOptions });
             activatedSubscriptionTicker = true;
             if (optionsSubscriptionTicker == null)
             {
                 optionsSubscriptionTicker = new JObject();
             }
-            optionsSubscriptionTicker.put(market, options);
+            optionsSubscriptionTicker.Add(market, options);
             DoSendPublic(options);
         }
 
@@ -1093,18 +1029,18 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void SubscriptionTicker24H(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addSubscriptionTicker24hHandler(market, msgHandler);
-            JObject options = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "ticker24h");
-            subOptions.put("markets", new string[] { market });
-            options.put("action", "subscribe");
-            options.put("channels", new JObject[] { subOptions });
+            var options = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "ticker24h");
+            subOptions.Add("markets", new string[] { market });
+            options.Add("action", "subscribe");
+            options.Add("channels", new JObject[] { subOptions });
             activatedSubscriptionTicker24h = true;
             if (optionsSubscriptionTicker24h == null)
             {
                 optionsSubscriptionTicker24h = new JObject();
             }
-            optionsSubscriptionTicker24h.put(market, options);
+            optionsSubscriptionTicker24h.Add(market, options);
             DoSendPublic(options);
         }
 
@@ -1112,39 +1048,39 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void SubscriptionAccount(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addSubscriptionAccountHandler(market, msgHandler);
-            JObject options = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "account");
-            subOptions.put("markets", new string[] { market });
-            options.put("action", "subscribe");
-            options.put("channels", new JObject[] { subOptions });
+            var options = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "account");
+            subOptions.Add("markets", new string[] { market });
+            options.Add("action", "subscribe");
+            options.Add("channels", new JObject[] { subOptions });
             activatedSubscriptionAccount = true;
             if (optionsSubscriptionAccount == null)
             {
                 optionsSubscriptionAccount = new JObject();
             }
-            optionsSubscriptionAccount.put(market, options);
+            optionsSubscriptionAccount.Add(market, options);
             DoSendPrivate(options);
         }
 
         public void SubscriptionCandles(string market, string interval, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addSubscriptionCandlesHandler(market, interval, msgHandler);
-            JObject options = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "candles");
-            subOptions.put("interval", new string[] { interval });
-            subOptions.put("markets", new string[] { market });
-            options.put("action", "subscribe");
-            options.put("channels", new JObject[] { subOptions });
+            var options = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "candles");
+            subOptions.Add("interval", new string[] { interval });
+            subOptions.Add("markets", new string[] { market });
+            options.Add("action", "subscribe");
+            options.Add("channels", new JObject[] { subOptions });
             activatedSubscriptionCandles = true;
-            JObject intervalIndex = new JObject();
-            intervalIndex.put(interval, options);
+            var intervalIndex = new JObject();
+            intervalIndex.Add(interval, options);
             if (optionsSubscriptionCandles == null)
             {
                 optionsSubscriptionCandles = new JObject();
             }
-            optionsSubscriptionCandles.put(market, intervalIndex);
+            optionsSubscriptionCandles.Add(market, intervalIndex);
             DoSendPublic(options);
         }
 
@@ -1152,18 +1088,18 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void SubscriptionTrades(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addSubscriptionTradesHandler(market, msgHandler);
-            JObject options = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "trades");
-            subOptions.put("markets", new string[] { market });
-            options.put("action", "subscribe");
-            options.put("channels", new JObject[] { subOptions });
+            var options = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "trades");
+            subOptions.Add("markets", new string[] { market });
+            options.Add("action", "subscribe");
+            options.Add("channels", new JObject[] { subOptions });
             activatedSubscriptionTrades = true;
             if (optionsSubscriptionTrades == null)
             {
                 optionsSubscriptionTrades = new JObject();
             }
-            optionsSubscriptionTrades.put(market, options);
+            optionsSubscriptionTrades.Add(market, options);
             DoSendPublic(options);
         }
 
@@ -1171,18 +1107,18 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         public void SubscriptionBookUpdate(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
         {
             ws.addSubscriptionBookUpdateHandler(market, msgHandler);
-            JObject options = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "book");
-            subOptions.put("markets", new string[] { market });
-            options.put("action", "subscribe");
-            options.put("channels", new JObject[] { subOptions });
+            var options = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "book");
+            subOptions.Add("markets", new string[] { market });
+            options.Add("action", "subscribe");
+            options.Add("channels", new JObject[] { subOptions });
             activatedSubscriptionBookUpdate = true;
             if (optionsSubscriptionBookUpdate == null)
             {
                 optionsSubscriptionBookUpdate = new JObject();
             }
-            optionsSubscriptionBookUpdate.put(market, options);
+            optionsSubscriptionBookUpdate.Add(market, options);
             DoSendPublic(options);
         }
 
@@ -1191,33 +1127,33 @@ public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgH
         {
             ws.keepBookCopy = true;
             Map<string, object> bidsAsks = new HashMap<string, object>();
-            bidsAsks.put("bids", new ArrayList<ArrayList<Float>>());
-            bidsAsks.put("asks", new ArrayList<ArrayList<Float>>());
+            bidsAsks.Add("bids", new ArrayList<ArrayList<Float>>());
+            bidsAsks.Add("asks", new ArrayList<ArrayList<Float>>());
 
-            Book.put(market, bidsAsks);
+            Book.Add(market, bidsAsks);
             ws.addSubscriptionBookHandler(market, msgHandler);
-            JObject options = new JObject();
-            options.put("action", "getBook");
-            options.put("market", market);
+            var options = new JObject();
+            options.Add("action", "getBook");
+            options.Add("market", market);
             activatedSubscriptionBook = true;
             if (optionsSubscriptionBookFirst == null)
             {
                 optionsSubscriptionBookFirst = new JObject();
             }
-            optionsSubscriptionBookFirst.put(market, options);
+            optionsSubscriptionBookFirst.Add(market, options);
             DoSendPublic(options);
 
-            JObject secondOptions = new JObject();
-            JObject subOptions = new JObject();
-            subOptions.put("name", "book");
-            subOptions.put("markets", new string[] { market });
-            secondOptions.put("action", "subscribe");
-            secondOptions.put("channels", new JObject[] { subOptions });
+            var secondOptions = new JObject();
+            var subOptions = new JObject();
+            subOptions.Add("name", "book");
+            subOptions.Add("markets", new string[] { market });
+            secondOptions.Add("action", "subscribe");
+            secondOptions.Add("channels", new JObject[] { subOptions });
             if (optionsSubscriptionBookSecond == null)
             {
                 optionsSubscriptionBookSecond = new JObject();
             }
-            optionsSubscriptionBookSecond.put(market, secondOptions);
+            optionsSubscriptionBookSecond.Add(market, secondOptions);
             DoSendPublic(secondOptions);
         }
     }
