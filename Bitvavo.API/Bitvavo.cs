@@ -4,19 +4,22 @@
     using System.IO;
     using System.Linq;
     using System.Net;
+    using System.Net.Http;
+    using System.Net.Http.Headers;
+    using System.Net.WebSockets;
     using System.Security.Cryptography;
     using System.Text;
     using System.Threading;
-    using Newtonsoft.Json;
+
     using Newtonsoft.Json.Linq;
 
     public class Bitvavo
     {
-        private Uri ApiUri = new Uri("https://api.bitvavo.com/v2");
-        private Uri SocketUri = new Uri("wss://ws.bitvavo.com/v2/");
+        private readonly Uri ApiUri = new Uri("https://api.bitvavo.com/v2");
+        private readonly Uri SocketUri = new Uri("wss://ws.bitvavo.com/v2/");
 
-        private readonly string ApiKey;
-        private readonly string ApiSecret;
+        private readonly string ApiKey = "";
+        private readonly string ApiSecret = "";
         private readonly int AccessWindow = 10000;
 
         private int RateLimitRemaining;
@@ -25,24 +28,28 @@
         private bool RateLimitThreadStarted;
         private readonly bool Debugging;
 
+        private HttpClient Client { get; }
+
         /// <summary>
         /// Initializes a new instance of the <see cref="Bitvavo" /> class.
         /// </summary>
         /// <param name="apiKey">The API key.</param>
         /// <param name="apiSecret">The API secret.</param>
         /// <param name="accessWindow">The access window.</param>
-        /// <param name="ApiUri">The rest URL.</param>
-        /// <param name="webSocketUrl">The web socket URL.</param>
+        /// <param name="apiUri">The API URI.</param>
+        /// <param name="socketUri">The socket URI.</param>
         /// <param name="debugging">if set to <c>true</c> [debugging].</param>
-        public Bitvavo(string apiKey, string apiSecret, int accessWindow, string ApiUri, string webSocketUrl, bool debugging)
+        public Bitvavo(string apiKey, string apiSecret, int accessWindow, string apiUri, string socketUri, bool debugging)
         {
             RateLimitRemaining = 1000;
             RateLimitReset = 0;
-
-            ApiKey = !string.IsNullOrEmpty(apiKey) ? apiKey : "";
-            ApiSecret = !string.IsNullOrEmpty(apiSecret) ? apiSecret : "";
+            ApiKey = !string.IsNullOrEmpty(apiKey) ? apiKey : ApiKey;
+            ApiSecret = !string.IsNullOrEmpty(apiSecret) ? apiSecret : ApiSecret;
             AccessWindow = accessWindow != 0 ? accessWindow : AccessWindow;
+            ApiUri = !string.IsNullOrEmpty(apiUri) ? new Uri(apiUri) : ApiUri;
+            SocketUri = !string.IsNullOrEmpty(socketUri) ? new Uri(socketUri) : SocketUri;
             Debugging = debugging;
+            Client = new HttpClient { BaseAddress = ApiUri };
         }
 
         /// <summary>
@@ -66,20 +73,22 @@
         /// <summary>
         /// Creates the postfix.
         /// </summary>
-        /// <param name="options">The options.</param>
+        /// <param name="query">The query.</param>
+        /// <param name="paramName">Name of the parameter.</param>
+        /// <param name="paramValue">The parameter value.</param>
         /// <returns></returns>
-        private static string CreatePostfix(JObject options)
+        private static void AddQuery(ref string query, string paramName, string paramValue)
         {
-            var keys = options
-                .Properties()
-                .Select(p => p.Name)
-                .ToList();
+            if (string.IsNullOrWhiteSpace(query) && !string.IsNullOrWhiteSpace(paramValue))
+            {
+                query = $"?{paramName}={WebUtility.UrlEncode(paramValue)}";
+                return;
+            }
 
-            var array = keys
-                .Select(key => $"{key}={options.GetValue(key)}")
-                .ToList();
-
-            return $"?{string.Join("&", array)}";
+            if (!string.IsNullOrWhiteSpace(query) && !string.IsNullOrWhiteSpace(paramValue))
+            {
+                query += $"&{paramName}={WebUtility.UrlEncode(paramValue)}";
+            }
         }
 
         /// <summary>
@@ -90,21 +99,17 @@
         /// <param name="urlEndpoint">The URL endpoint.</param>
         /// <param name="body">The body.</param>
         /// <returns></returns>
-        public string CreateSignature(long timestamp, string method, string urlEndpoint, JObject body)
+        public string CreateSignature(long timestamp, string method, string urlEndpoint, string body)
         {
-            if (ApiSecret == null || ApiKey == null)
+            if (string.IsNullOrEmpty(ApiSecret) || string.IsNullOrEmpty(ApiKey))
             {
                 ErrorToConsole("The API key or secret has not been set. Please pass the key and secret when instantiating the bitvavo object.");
                 return "";
             }
+
             try
             {
-                var result = $"{timestamp}{method}/v2{urlEndpoint}";
-                if (body.Count != 0)
-                {
-                    result += body.ToString(Formatting.None);
-                }
-
+                var result = $"{timestamp}{method}/v2{urlEndpoint}{body}";
                 var encoding = new UTF8Encoding();
                 var textBytes = encoding.GetBytes(result);
                 var keyBytes = encoding.GetBytes(ApiSecret);
@@ -228,6 +233,31 @@
         }
 
         /// <summary>
+        /// Webs the request.
+        /// </summary>
+        /// <param name="urlString">The URL string.</param>
+        /// <param name="method">The method.</param>
+        /// <returns></returns>
+        private string WebRequest(string urlString, HttpMethod method)
+        {
+            if (!string.IsNullOrEmpty(ApiKey) && !string.IsNullOrEmpty(ApiSecret))
+            {
+                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var signature = CreateSignature(timestamp, method.ToString(), (urlString), string.Empty);
+                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Key", ApiKey);
+                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Signature", signature);
+                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
+                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Window", AccessWindow.ToString());
+            }
+
+            var request = new HttpRequestMessage(method, urlString);
+            if (request.Content == null) { request.Content = new StringContent(""); }
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            var response = Client.SendAsync(request).Result;
+            return response.Content.ReadAsStringAsync().Result;
+        }
+
+        /*/// <summary>
         /// Privates the request.
         /// </summary>
         /// <param name="urlEndpoint">The URL endpoint.</param>
@@ -432,31 +462,30 @@
                 ErrorToConsole("Caught IOerror, " + ex);
             }
             return new JArray();
-        }
+        }*/
 
         /// <summary>
         /// Times this instance.
         /// </summary>
         /// <returns></returns>
-        public JObject Time()
+        public string Time()
         {
-            return PublicRequest((ApiUri + "/time"), "GET", new JObject());
+            return WebRequest($"{ApiUri}/time", HttpMethod.Get);
         }
 
         /// <summary>
         /// Markets the specified options.
         /// </summary>
-        /// <param name="options">The options.</param>
+        /// <param name="market">The market.</param>
         /// <returns></returns>
-        public JArray Markets(JObject options)
+        public string Markets(string market)
         {
-            var postfix = CreatePostfix(options);
-            return options.ContainsKey("market")
-                       ? new JArray(PublicRequest((ApiUri + "/markets" + postfix), "GET", new JObject()))
-                       : PublicRequestArray((ApiUri + "/markets" + postfix), "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            return WebRequest($"{ApiUri}/markets{query}", HttpMethod.Get);
         }
 
-        /// <summary>
+        /*/// <summary>
         /// Assetses the specified options.
         /// </summary>
         /// <param name="options">The options.</param>
@@ -474,7 +503,7 @@
          * @param market Specifies the market for which the book should be returned.
          * @param options optional parameters: depth
          * @return JObject response, get bids through response.getJArray("bids"), asks through response.getJArray("asks")
-         */
+         #1#
         public JObject Book(string market, JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -486,7 +515,7 @@
          * @param market Specifies the market for which trades should be returned
          * @param options optional parameters: limit, start, end, tradeIdFrom, tradeIdTo
          * @return JArray response, iterate over array to get individual trades response.getJObject(index)
-         */
+         #1#
         public JArray PublicTrades(string market, JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -499,7 +528,7 @@
          * @param interval interval on which the candles should be returned
          * @param options optional parameters: limit, start, end
          * @return JArray response, get individual candles through response.getJArray(index)
-         */
+         #1#
         public JArray Candles(string market, string interval, JObject options)
         {
             options.Add("interval", interval);
@@ -511,7 +540,7 @@
          * Returns the ticker price
          * @param options optional parameters: market
          * @return JArray response, get individual prices by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray TickerPrice(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -531,7 +560,7 @@
          * Return the book ticker
          * @param options optional parameters: market
          * @return JArray response, get individual books by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray TickerBook(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -551,7 +580,7 @@
          * Return the 24 hour ticker
          * @param options optional parameters: market
          * @return JArray response, get individual 24 hour prices by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray Ticker24H(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -577,7 +606,7 @@
          *                                       stopLossLimit/takeProfitLimit:(amount, price, postOnly, triggerType, triggerReference, triggerAmount)
          *                                       all orderTypes: timeInForce, selfTradePrevention, responseRequired
          * @return JObject response, get status of the order through response.getString("status")
-         */
+         #1#
         public JObject PlaceOrder(string market, string side, string orderType, JObject body)
         {
             body.Add("market", market);
@@ -591,7 +620,7 @@
          * @param market the market the order resides on
          * @param orderId the id of the order
          * @return JObject response, get status of the order through response.getString("status")
-         */
+         #1#
         public JObject GetOrder(string market, string orderId)
         {
             var options = new JObject();
@@ -609,7 +638,7 @@
          *                           untriggered stopLoss/takeProfit:(amount, amountQuote, disableMarketProtection, triggerType, triggerReference, triggerAmount)
          *                                       stopLossLimit/takeProfitLimit: (amount, price, postOnly, triggerType, triggerReference, triggerAmount)
          * @return JObject response, get status of the order through response.getString("status")
-         */
+         #1#
         public JObject UpdateOrder(string market, string orderId, JObject body)
         {
             body.Add("market", market);
@@ -622,7 +651,7 @@
          * @param market the market the order resides on
          * @param orderId the id of the order which should be cancelled
          * @return JObject response, get the id of the order which was cancelled through response.getString("orderId")
-         */
+         #1#
         public JObject CancelOrder(string market, string orderId)
         {
             var options = new JObject();
@@ -637,7 +666,7 @@
          * @param market the market for which orders should be returned
          * @param options optional parameters: limit, start, end, orderIdFrom, orderIdTo
          * @return JArray response, get individual orders by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray GetOrders(string market, JObject options)
         {
             options.Add("market", market);
@@ -649,7 +678,7 @@
          * Cancel multiple orders at once, if no market is specified all orders will be canceled
          * @param options optional parameters: market
          * @return JArray response, get individual cancelled orderId's by iterating over array: response.getJObject(index).getString("orderId")
-         */
+         #1#
         public JArray CancelOrders(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -660,7 +689,7 @@
          * Returns all open orders for an account
          * @param options optional parameters: market
          * @return JArray response, get individual orders by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray OrdersOpen(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -672,7 +701,7 @@
          * @param market the market for which trades should be returned
          * @param options optional parameters: limit, start, end, tradeIdFrom, tradeIdTo
          * @return JArray trades, get individual trades by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray Trades(string market, JObject options)
         {
             options.Add("market", market);
@@ -683,7 +712,7 @@
         /**
          * Return the fee tier for an account
          * @return JObject response, get taker fee through: response.getJObject("fees").getString("taker")
-         */
+         #1#
         public JObject Account()
         {
             return PrivateRequest("/account", "", "GET", new JObject());
@@ -693,7 +722,7 @@
          * Returns the balance for an account
          * @param options optional parameters: symbol
          * @return JArray response, get individual balances by iterating over array: response.getJObject(index)
-         */
+         #1#
         public JArray Balance(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -704,7 +733,7 @@
          * Returns the deposit address which can be used to increase the account balance
          * @param symbol the crypto currency for which the address should be returned
          * @return JObject response, get address through response.getString("address")
-         */
+         #1#
         public JObject DepositAssets(string symbol)
         {
             var options = new JObject();
@@ -720,7 +749,7 @@
          * @param address The address to which the crypto should get sent
          * @param body optional parameters: paymentId, internal, addWithdrawalFee
          * @return JObject response, get success confirmation through response.getBoolean("success")
-         */
+         #1#
         public JObject WithdrawAssets(string symbol, string amount, string address, JObject body)
         {
             body.Add("symbol", symbol);
@@ -733,7 +762,7 @@
          * Returns the entire deposit history for an account
          * @param options optional parameters: symbol, limit, start, end
          * @return JArray response, get individual deposits by iterating over the array: response.getJObject(index)
-         */
+         #1#
         public JArray DepositHistory(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -744,7 +773,7 @@
          * Returns the entire withdrawal history for an account
          * @param options optional parameters: symbol, limit, start, end
          * @return JArray response, get individual withdrawals by iterating over the array: response.getJObject(index)
-         */
+         #1#
         public JArray WithdrawalHistory(JObject options)
         {
             var postfix = CreatePostfix(options);
@@ -754,7 +783,7 @@
         /**
          * Creates a websocket object
          * @return Websocket the object on which all websocket function can be called.
-         */
+         #1#
         public Websocket NewWebsocket()
         {
             websocketObject = new Websocket();
@@ -1155,6 +1184,6 @@
             }
             optionsSubscriptionBookSecond.Add(market, secondOptions);
             DoSendPublic(secondOptions);
-        }
+        }*/
     }
 }
