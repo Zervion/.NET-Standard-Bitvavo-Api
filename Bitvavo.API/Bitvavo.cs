@@ -1,16 +1,15 @@
 ﻿namespace Bitvavo.API
 {
     using System;
-    using System.IO;
     using System.Linq;
     using System.Net;
     using System.Net.Http;
     using System.Net.Http.Headers;
-    using System.Net.WebSockets;
     using System.Security.Cryptography;
     using System.Text;
     using System.Threading;
 
+    using Newtonsoft.Json;
     using Newtonsoft.Json.Linq;
 
     public class Bitvavo
@@ -119,7 +118,7 @@
             }
             catch (Exception ex)
             {
-                ErrorToConsole("Caught exception in createSignature " + ex);
+                ErrorToConsole($"Caught exception in createSignature {ex}");
                 return "";
             }
         }
@@ -130,10 +129,8 @@
         /// <param name="message">The message.</param>
         public void DebugToConsole(string message)
         {
-            if (Debugging)
-            {
-                Console.WriteLine($"{DateTime.Now:HH:mm:ss} DEBUG: " + message);
-            }
+            if (!Debugging) return;
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss} DEBUG: {message}");
         }
 
         /// <summary>
@@ -142,7 +139,7 @@
         /// <param name="message">The message.</param>
         public void ErrorToConsole(string message)
         {
-            Console.WriteLine($"{DateTime.Now:HH:mm:ss} ERROR: " + message);
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss} ERROR: {message}");
         }
 
         /// <summary>
@@ -151,61 +148,56 @@
         /// <param name="response">The response.</param>
         public void ErrorRateLimit(JObject response)
         {
-            if (response.Value<int>("errorCode") == 105)
+            if (response.Value<int>("errorCode") != 105) return;
+            RateLimitRemaining = 0;
+            var message = response.Value<string>("error");
+            var placeHolder = message.Split(" at ")[1].Replace(".", "");
+            RateLimitReset = int.Parse(placeHolder);
+            if (!RateLimitThreadStarted)
             {
-                RateLimitRemaining = 0;
-                var message = response.Value<string>("error");
-                var placeHolder = message.Split(" at ")[1].Replace(".", "");
-                RateLimitReset = int.Parse(placeHolder);
-                if (!RateLimitThreadStarted)
-                {
-                    new Thread(() =>
-                        {
-                            try
-                            {
-                                var timeToWait = Convert.ToInt32(RateLimitReset - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                                RateLimitThreadStarted = true;
-                                DebugToConsole("We are waiting for " + (timeToWait / 1000) + " seconds, untill the rate limit ban will be lifted.");
-                                Thread.Sleep(timeToWait);
-                            }
-                            catch (ThreadInterruptedException)
-                            {
-                                ErrorToConsole("Got interrupted while waiting for the rate limit ban to be lifted.");
-                            }
-                            RateLimitThreadStarted = false;
-                            if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < RateLimitReset) return;
-                            DebugToConsole("Rate limit ban has been lifted, resetting rate limit to 1000.");
-                            RateLimitRemaining = 1000;
-                        }).Start();
-                }
-            }
-        }
-
-
-        /// <summary>
-        /// Updates the rate limit.
-        /// </summary>
-        /// <param name="headers">The headers.</param>
-        public void UpdateRateLimit(WebHeaderCollection headers)
-        {
-            var remainingHeader = headers.Get("Bitvavo-Ratelimit-Remaining");
-            var resetHeader = headers.Get("Bitvavo-Ratelimit-ResetAt");
-            if (remainingHeader != null)
-            {
-                RateLimitRemaining = int.Parse(remainingHeader);
-            }
-            if (resetHeader != null)
-            {
-                RateLimitReset = int.Parse(resetHeader);
-                if (!RateLimitThreadStarted)
-                {
-                    new Thread(new ThreadStart(() =>
+                new Thread(() =>
                     {
                         try
                         {
                             var timeToWait = Convert.ToInt32(RateLimitReset - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                             RateLimitThreadStarted = true;
-                            DebugToConsole("We started a thread which waits for " + (timeToWait / 1000) + " seconds, untill the rate limit will be reset.");
+                            DebugToConsole($"We are waiting for {timeToWait / 1000} seconds, untill the rate limit ban will be lifted.");
+                            Thread.Sleep(timeToWait);
+                        }
+                        catch (ThreadInterruptedException)
+                        {
+                            ErrorToConsole("Got interrupted while waiting for the rate limit ban to be lifted.");
+                        }
+                        RateLimitThreadStarted = false;
+                        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < RateLimitReset) return;
+                        DebugToConsole("Rate limit ban has been lifted, resetting rate limit to 1000.");
+                        RateLimitRemaining = 1000;
+                    }).Start();
+            }
+        }
+
+        /// <summary>
+        /// Updates the rate limit.
+        /// </summary>
+        /// <param name="headers">The headers.</param>
+        public void UpdateRateLimit(HttpResponseHeaders headers)
+        {
+            if (headers.TryGetValues("Bitvavo-Ratelimit-Remaining", out var remainingHeaders))
+            {
+                RateLimitRemaining = int.Parse(remainingHeaders.First());
+            }
+
+            if (!headers.TryGetValues("Bitvavo-Ratelimit-ResetAt", out var resetHeader)) return;
+            RateLimitReset = int.Parse(resetHeader.First());
+            if (!RateLimitThreadStarted)
+            {
+                new Thread(() =>
+                    {
+                        try
+                        {
+                            var timeToWait = Convert.ToInt32(RateLimitReset - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                            RateLimitThreadStarted = true;
+                            DebugToConsole($"We started a thread which waits for {timeToWait / 1000} seconds, untill the rate limit will be reset.");
                             Thread.Sleep(timeToWait);
                         }
                         catch (ThreadInterruptedException)
@@ -213,13 +205,10 @@
                             ErrorToConsole("Got interrupted while waiting for the rate limit to be reset.");
                         }
                         RateLimitThreadStarted = false;
-                        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= RateLimitReset)
-                        {
-                            DebugToConsole("Resetting rate limit to 1000.");
-                            RateLimitRemaining = 1000;
-                        }
-                    })).Start();
-                }
+                        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < RateLimitReset) return;
+                        DebugToConsole("Resetting rate limit to 1000.");
+                        RateLimitRemaining = 1000;
+                    }).Start();
             }
         }
 
@@ -233,554 +222,255 @@
         }
 
         /// <summary>
-        /// Webs the request.
+        /// Processes the web request.
         /// </summary>
         /// <param name="urlString">The URL string.</param>
         /// <param name="method">The method.</param>
-        /// <returns></returns>
-        private string WebRequest(string urlString, HttpMethod method)
-        {
-            if (!string.IsNullOrEmpty(ApiKey) && !string.IsNullOrEmpty(ApiSecret))
-            {
-                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var signature = CreateSignature(timestamp, method.ToString(), (urlString), string.Empty);
-                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Key", ApiKey);
-                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Signature", signature);
-                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
-                Client.DefaultRequestHeaders.Add("Bitvavo-Access-Window", AccessWindow.ToString());
-            }
-
-            var request = new HttpRequestMessage(method, urlString);
-            if (request.Content == null) { request.Content = new StringContent(""); }
-            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-            var response = Client.SendAsync(request).Result;
-            return response.Content.ReadAsStringAsync().Result;
-        }
-
-        /*/// <summary>
-        /// Privates the request.
-        /// </summary>
-        /// <param name="urlEndpoint">The URL endpoint.</param>
-        /// <param name="urlParams">The URL parameters.</param>
-        /// <param name="method">The method.</param>
-        /// <param name="body">The body.</param>
-        /// <returns></returns>
-        public JObject PrivateRequest(string urlEndpoint, string urlParams, string method, JObject body)
+        /// <param name="jsonBody">The json body.</param>
+        /// <returns>The JToken created from the response.</returns>
+        private JToken WebRequest(string urlString, HttpMethod method, JToken jsonBody)
         {
             try
             {
-                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var signature = CreateSignature(timestamp, method, (urlEndpoint + urlParams), body);
-                var url = new Uri(ApiUri + urlEndpoint + urlParams);
-                var httpsCon = (HttpWebRequest)WebRequest.Create(url);
-
-                httpsCon.Method = method;
-                httpsCon.Headers.Add("Bitvavo-Access-Key", ApiKey);
-                httpsCon.Headers.Add("Bitvavo-Access-Signature", signature);
-                httpsCon.Headers.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
-                httpsCon.Headers.Add("Bitvavo-Access-Window", AccessWindow.ToString());
-                httpsCon.ContentType = "application/json";
-
-                if (body.Count != 0)
+                var bodyString = jsonBody.ToString(Formatting.None);
+                if (!string.IsNullOrEmpty(ApiKey) && !string.IsNullOrEmpty(ApiSecret))
                 {
-                    using var streamWriter = new StreamWriter(httpsCon.GetRequestStream());
-                    var json = JsonConvert.SerializeObject(body);
-                    streamWriter.Write(json);
-                    streamWriter.Flush();
-                    streamWriter.Close();
+                    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    var signature = CreateSignature(timestamp, method.ToString(), (urlString), bodyString);
+                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Key", ApiKey);
+                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Signature", signature);
+                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
+                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Window", AccessWindow.ToString());
                 }
 
-                using var myHttpWebResponse = (HttpWebResponse)httpsCon.GetResponse();
-                var responseCode = (int)myHttpWebResponse.StatusCode;
-                using var reader = new StreamReader(myHttpWebResponse.GetResponseStream());
-                if (responseCode == 200)
+                var request = new HttpRequestMessage(method, urlString)
                 {
-                    UpdateRateLimit(myHttpWebResponse.Headers);
+                    Content = string.IsNullOrEmpty(bodyString)
+                                                    ? new StringContent("")
+                                                    : new StringContent(bodyString, Encoding.UTF8, "application/json"),
+                };
+
+                var response = Client.SendAsync(request).Result;
+                if (response.IsSuccessStatusCode)
+                {
+                    UpdateRateLimit(response.Headers);
                 }
 
-                var responseFromServer = reader.ReadToEnd();
-                var response = JObject.Parse(responseFromServer);
-                if (responseFromServer.Contains("errorCode"))
+                var result = response.Content.ReadAsStringAsync().Result;
+
+                if (result.Contains("errorCode"))
                 {
-                    ErrorRateLimit(response);
+                    ErrorRateLimit(JObject.Parse(result));
                 }
-                return response;
+
+                return JToken.Parse(result);
             }
             catch (Exception ex)
             {
-                ErrorToConsole("Caught exception in PrivateRequest " + ex);
+                ErrorToConsole($"Caught exception in privateRequest {ex}");
                 return new JObject();
             }
         }
 
         /// <summary>
-        /// Privates the request array.
-        /// </summary>
-        /// <param name="urlEndpoint">The URL endpoint.</param>
-        /// <param name="urlParams">The URL parameters.</param>
-        /// <param name="method">The method.</param>
-        /// <param name="body">The body.</param>
-        /// <returns></returns>
-        public JArray PrivateRequestArray(string urlEndpoint, string urlParams, string method, JObject body)
-        {
-            try
-            {
-                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var signature = CreateSignature(timestamp, method, (urlEndpoint + urlParams), body);
-                var url = new Uri(ApiUri + urlEndpoint + urlParams);
-                var httpsCon = (HttpWebRequest)WebRequest.Create(url);
-
-                httpsCon.Method = method;
-                httpsCon.Headers.Add("Bitvavo-Access-Key", ApiKey);
-                httpsCon.Headers.Add("Bitvavo-Access-Signature", signature);
-                httpsCon.Headers.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
-                httpsCon.Headers.Add("Bitvavo-Access-Window", AccessWindow.ToString());
-                httpsCon.ContentType = "application/json";
-                if (body.Count != 0)
-                {
-                    using var streamWriter = new StreamWriter(httpsCon.GetRequestStream());
-                    var json = JsonConvert.SerializeObject(body);
-                    streamWriter.Write(json);
-                    streamWriter.Flush();
-                    streamWriter.Close();
-                }
-
-                using var myHttpWebResponse = (HttpWebResponse)httpsCon.GetResponse();
-                var responseCode = (int)myHttpWebResponse.StatusCode;
-                using var reader = new StreamReader(myHttpWebResponse.GetResponseStream());
-                if (responseCode == 200)
-                {
-                    UpdateRateLimit(myHttpWebResponse.Headers);
-                }
-
-                var responseFromServer = reader.ReadToEnd();
-                if (responseFromServer.Contains("errorCode"))
-                {
-                    ErrorRateLimit(new JObject(responseFromServer));
-                }
-                var response = JArray.Parse(responseFromServer);
-                return response;
-            }
-            catch (Exception ex)
-            {
-                ErrorToConsole("Caught exception in PrivateRequest " + ex);
-                return new JArray();
-            }
-        }
-
-        /// <summary>
-        /// Publics the request.
+        /// Processes the web request.
         /// </summary>
         /// <param name="urlString">The URL string.</param>
         /// <param name="method">The method.</param>
-        /// <param name="data">The data.</param>
-        /// <returns></returns>
-        public JObject PublicRequest(string urlString, string method, JObject data)
-        {
-            try
-            {
-                var url = new Uri(urlString);
-                var httpsCon = (HttpWebRequest)WebRequest.Create(url);
-                httpsCon.Method = method;
-                if (!string.IsNullOrEmpty(ApiKey))
-                {
-                    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    var signature = CreateSignature(timestamp, method, urlString.Replace(ApiUri.ToString(), ""), new JObject());
-                    httpsCon.Headers.Add("Bitvavo-Access-Key", ApiKey);
-                    httpsCon.Headers.Add("Bitvavo-Access-Signature", signature);
-                    httpsCon.Headers.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
-                    httpsCon.Headers.Add("Bitvavo-Access-Window", AccessWindow.ToString());
-                    httpsCon.ContentType = "application/json";
-                }
-                using var myHttpWebResponse = (HttpWebResponse)httpsCon.GetResponse();
-                var responseCode = (int)myHttpWebResponse.StatusCode;
-                using var reader = new StreamReader(myHttpWebResponse.GetResponseStream());
-                if (responseCode == 200)
-                {
-                    UpdateRateLimit(myHttpWebResponse.Headers);
-                }
+        /// <returns>The JToken created from the response.</returns>
+        private JToken WebRequest(string urlString, HttpMethod method) => WebRequest(urlString, method, new JObject());
 
-                var responseFromServer = reader.ReadToEnd();
-                if (responseFromServer.Contains("errorCode"))
-                {
-                    ErrorRateLimit(new JObject(responseFromServer));
-                }
-                var response = JObject.Parse(responseFromServer);
-                return response;
-            }
-            catch (IOException ex)
-            {
-                ErrorToConsole("Caught IOerror, " + ex);
-            }
-            return new JObject();
+        /// <summary>
+        /// Returns the current timestamp in milliseconds since 1 Jan 1970.
+        /// This can be useful if you need to synchronise your time with the Bitvavo servers.
+        /// </summary>
+        /// <returns>The JObject response.</returns>
+        public JObject Time()
+        {
+            return (JObject)WebRequest($"{ApiUri}/time", HttpMethod.Get);
         }
 
-        /// <summary>
-        /// Publics the request array.
-        /// </summary>
-        /// <param name="urlString">The URL string.</param>
-        /// <param name="method">The method.</param>
-        /// <param name="data">The data.</param>
-        /// <returns></returns>
-        public JArray PublicRequestArray(string urlString, string method, JObject data)
-        {
-            try
-            {
-                var url = new Uri(urlString);
-                var httpsCon = (HttpWebRequest)WebRequest.Create(url);
-                httpsCon.Method = method;
-                if (!string.IsNullOrEmpty(ApiKey))
-                {
-                    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    var signature = CreateSignature(timestamp, method, urlString.Replace(ApiUri.ToString(), ""), new JObject());
-                    httpsCon.Headers.Add("Bitvavo-Access-Key", ApiKey);
-                    httpsCon.Headers.Add("Bitvavo-Access-Signature", signature);
-                    httpsCon.Headers.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
-                    httpsCon.Headers.Add("Bitvavo-Access-Window", AccessWindow.ToString());
-                    httpsCon.ContentType = "application/json";
-                }
-                using var myHttpWebResponse = (HttpWebResponse)httpsCon.GetResponse();
-                var responseCode = (int)myHttpWebResponse.StatusCode;
-                using var reader = new StreamReader(myHttpWebResponse.GetResponseStream());
-                if (responseCode == 200)
-                {
-                    UpdateRateLimit(myHttpWebResponse.Headers);
-                }
-
-                var responseFromServer = reader.ReadToEnd();
-                if (responseFromServer.IndexOf("error") != -1)
-                {
-                    ErrorRateLimit(new JObject(responseFromServer));
-                    return new JArray("[" + responseFromServer + "]");
-                }
-                DebugToConsole("FULL RESPONSE: " + responseFromServer);
-                var response = JArray.Parse(responseFromServer);
-                return response;
-            }
-            catch (IOException ex)
-            {
-                ErrorToConsole("Caught IOerror, " + ex);
-            }
-            return new JArray();
-        }*/
-
-        /// <summary>
-        /// Times this instance.
-        /// </summary>
-        /// <returns></returns>
-        public string Time()
-        {
-            return WebRequest($"{ApiUri}/time", HttpMethod.Get);
-        }
-
-        /// <summary>
-        /// Markets the specified options.
-        /// </summary>
-        /// <param name="market">The market.</param>
-        /// <returns></returns>
-        public string Markets(string market)
+        public JArray Markets(string market)
         {
             var query = string.Empty;
             AddQuery(ref query, nameof(market), market);
-            return WebRequest($"{ApiUri}/markets{query}", HttpMethod.Get);
+            return (JArray)WebRequest($"{ApiUri}/markets{query}", HttpMethod.Get);
         }
 
-        /*/// <summary>
-        /// Assetses the specified options.
-        /// </summary>
-        /// <param name="options">The options.</param>
-        /// <returns></returns>
-        public JArray Assets(JObject options)
+        public JArray Assets(string symbol)
         {
-            var postfix = CreatePostfix(options);
-            return options.ContainsKey("symbol")
-                       ? new JArray(PublicRequest((ApiUri + "/assets" + postfix), "GET", new JObject()))
-                       : PublicRequestArray((ApiUri + "/assets" + postfix), "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(symbol), symbol);
+            return (JArray)WebRequest($"{ApiUri}/assets{query}", HttpMethod.Get);
         }
 
-        /**
-         * Returns the book for a certain market
-         * @param market Specifies the market for which the book should be returned.
-         * @param options optional parameters: depth
-         * @return JObject response, get bids through response.getJArray("bids"), asks through response.getJArray("asks")
-         #1#
-        public JObject Book(string market, JObject options)
+        public JObject Book(string market, int depth)
         {
-            var postfix = CreatePostfix(options);
-            return PublicRequest((ApiUri + "/" + market + "/book" + postfix), "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            AddQuery(ref query, nameof(depth), depth.ToString());
+            return (JObject)WebRequest($"{ApiUri}/{market}/book", HttpMethod.Get);
         }
 
-        /**
-         * Returns the trades for a specific market
-         * @param market Specifies the market for which trades should be returned
-         * @param options optional parameters: limit, start, end, tradeIdFrom, tradeIdTo
-         * @return JArray response, iterate over array to get individual trades response.getJObject(index)
-         #1#
-        public JArray PublicTrades(string market, JObject options)
+        public JArray PublicTrades(string market)
         {
-            var postfix = CreatePostfix(options);
-            return PublicRequestArray((ApiUri + "/" + market + "/trades" + postfix), "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            return (JArray)WebRequest($"{ApiUri}/{market}/trades{query}", HttpMethod.Get);
         }
 
-        /**
-         *  Returns the candles for a specific market
-         * @param market market for which the candles should be returned
-         * @param interval interval on which the candles should be returned
-         * @param options optional parameters: limit, start, end
-         * @return JArray response, get individual candles through response.getJArray(index)
-         #1#
-        public JArray Candles(string market, string interval, JObject options)
+        public JArray Candles(string market, string interval, int limit, long start, long end)
         {
-            options.Add("interval", interval);
-            var postfix = CreatePostfix(options);
-            return PublicRequestArray((ApiUri + "/" + market + "/candles" + postfix), "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            AddQuery(ref query, nameof(interval), interval);
+            AddQuery(ref query, nameof(limit), limit.ToString());
+            AddQuery(ref query, nameof(start), start.ToString());
+            AddQuery(ref query, nameof(end), end.ToString());
+            return (JArray)WebRequest($"{ApiUri}/{market}/candles{query}", HttpMethod.Get);
         }
 
-        /**
-         * Returns the ticker price
-         * @param options optional parameters: market
-         * @return JArray response, get individual prices by iterating over array: response.getJObject(index)
-         #1#
-        public JArray TickerPrice(JObject options)
+        public JArray TickerPrice(string market)
         {
-            var postfix = CreatePostfix(options);
-            if (options.ContainsKey("market"))
-            {
-                var returnArray = new JArray();
-                returnArray.Add(PublicRequest((ApiUri + "/ticker/price" + postfix), "GET", new JObject()));
-                return returnArray;
-            }
-            else
-            {
-                return PublicRequestArray((ApiUri + "/ticker/price" + postfix), "GET", new JObject());
-            }
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            var response = WebRequest($"{ApiUri}/ticker/price{query}", HttpMethod.Get);
+            return response.Type == JTokenType.Array ? (JArray)response : new JArray(response);
         }
 
-        /**
-         * Return the book ticker
-         * @param options optional parameters: market
-         * @return JArray response, get individual books by iterating over array: response.getJObject(index)
-         #1#
-        public JArray TickerBook(JObject options)
+        public JArray TickerBook(string market)
         {
-            var postfix = CreatePostfix(options);
-            if (options.ContainsKey("market"))
-            {
-                var returnArray = new JArray();
-                returnArray.Add(PublicRequest((ApiUri + "/ticker/book" + postfix), "GET", new JObject()));
-                return returnArray;
-            }
-            else
-            {
-                return PublicRequestArray((ApiUri + "/ticker/book" + postfix), "GET", new JObject());
-            }
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            var response = WebRequest($"{ApiUri}/ticker/book{query}", HttpMethod.Get);
+            return response.Type == JTokenType.Array ? (JArray)response : new JArray(response);
         }
 
-        /**
-         * Return the 24 hour ticker
-         * @param options optional parameters: market
-         * @return JArray response, get individual 24 hour prices by iterating over array: response.getJObject(index)
-         #1#
-        public JArray Ticker24H(JObject options)
+        public JArray Ticker24H(string market)
         {
-            var postfix = CreatePostfix(options);
-            if (options.ContainsKey("market"))
-            {
-                var returnArray = new JArray();
-                returnArray.Add(PublicRequest((ApiUri + "/ticker/24h" + postfix), "GET", new JObject()));
-                return returnArray;
-            }
-            else
-            {
-                return PublicRequestArray((ApiUri + "/ticker/24h" + postfix), "GET", new JObject());
-            }
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            var response = WebRequest($"{ApiUri}/ticker/24h{query}", HttpMethod.Get);
+            return response.Type == JTokenType.Array ? (JArray)response : new JArray(response);
         }
 
-        /**
-         * Places an order on the exchange
-         * @param market The market for which the order should be created
-         * @param side is this a buy or sell order
-         * @param orderType is this a limit or market order
-         * @param body optional body parameters: limit:(amount, price, postOnly), market:(amount, amountQuote, disableMarketProtection)
-         *                                       stopLoss/takeProfit:(amount, amountQuote, disableMarketProtection, triggerType, triggerReference, triggerAmount)
-         *                                       stopLossLimit/takeProfitLimit:(amount, price, postOnly, triggerType, triggerReference, triggerAmount)
-         *                                       all orderTypes: timeInForce, selfTradePrevention, responseRequired
-         * @return JObject response, get status of the order through response.getString("status")
-         #1#
         public JObject PlaceOrder(string market, string side, string orderType, JObject body)
         {
             body.Add("market", market);
             body.Add("side", side);
             body.Add("orderType", orderType);
-            return PrivateRequest("/order", "", "POST", body);
+            return (JObject)WebRequest($"{ApiUri}/order", HttpMethod.Post, body);
         }
 
-        /**
-         * Returns a specific order
-         * @param market the market the order resides on
-         * @param orderId the id of the order
-         * @return JObject response, get status of the order through response.getString("status")
-         #1#
         public JObject GetOrder(string market, string orderId)
         {
-            var options = new JObject();
-            options.Add("market", market);
-            options.Add("orderId", orderId);
-            var postfix = CreatePostfix(options);
-            return PrivateRequest("/order", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            AddQuery(ref query, nameof(orderId), orderId);
+            return (JObject)WebRequest($"{ApiUri}/order", HttpMethod.Get);
         }
 
-        /**
-         * Updates an order
-         * @param market the market the order resides on
-         * @param orderId the id of the order which should be updated
-         * @param body optional body parameters: limit:(amount, amountRemaining, price, timeInForce, selfTradePrevention, postOnly)
-         *                           untriggered stopLoss/takeProfit:(amount, amountQuote, disableMarketProtection, triggerType, triggerReference, triggerAmount)
-         *                                       stopLossLimit/takeProfitLimit: (amount, price, postOnly, triggerType, triggerReference, triggerAmount)
-         * @return JObject response, get status of the order through response.getString("status")
-         #1#
         public JObject UpdateOrder(string market, string orderId, JObject body)
         {
             body.Add("market", market);
             body.Add("orderId", orderId);
-            return PrivateRequest("/order", "", "PUT", body);
+            return (JObject)WebRequest($"{ApiUri}/order", HttpMethod.Put, body);
         }
 
-        /**
-         * Cancel an order
-         * @param market the market the order resides on
-         * @param orderId the id of the order which should be cancelled
-         * @return JObject response, get the id of the order which was cancelled through response.getString("orderId")
-         #1#
         public JObject CancelOrder(string market, string orderId)
         {
-            var options = new JObject();
-            options.Add("market", market);
-            options.Add("orderId", orderId);
-            var postfix = CreatePostfix(options);
-            return PrivateRequest("/order", postfix, "DELETE", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            AddQuery(ref query, nameof(orderId), orderId);
+            return (JObject)WebRequest($"{ApiUri}/order{query}", HttpMethod.Delete);
         }
 
-        /**
-         * Returns multiple orders for a specific market
-         * @param market the market for which orders should be returned
-         * @param options optional parameters: limit, start, end, orderIdFrom, orderIdTo
-         * @return JArray response, get individual orders by iterating over array: response.getJObject(index)
-         #1#
-        public JArray GetOrders(string market, JObject options)
+        public JArray GetOrders(string market, int limit, long start, long end, string orderIdFrom, string orderIdTo)
         {
-            options.Add("market", market);
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/orders", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            AddQuery(ref query, nameof(limit), limit.ToString());
+            AddQuery(ref query, nameof(start), start.ToString());
+            AddQuery(ref query, nameof(end), end.ToString());
+            AddQuery(ref query, nameof(orderIdFrom), orderIdFrom);
+            AddQuery(ref query, nameof(orderIdTo), orderIdTo);
+            return (JArray)WebRequest($"{ApiUri}/orders{query}", HttpMethod.Get);
         }
 
-        /**
-         * Cancel multiple orders at once, if no market is specified all orders will be canceled
-         * @param options optional parameters: market
-         * @return JArray response, get individual cancelled orderId's by iterating over array: response.getJObject(index).getString("orderId")
-         #1#
-        public JArray CancelOrders(JObject options)
+        public JArray CancelOrders(string market)
         {
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/orders", postfix, "DELETE", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            return (JArray)WebRequest($"{ApiUri}/orders{query}", HttpMethod.Delete);
         }
 
-        /**
-         * Returns all open orders for an account
-         * @param options optional parameters: market
-         * @return JArray response, get individual orders by iterating over array: response.getJObject(index)
-         #1#
-        public JArray OrdersOpen(JObject options)
+        public JArray OrdersOpen(string market)
         {
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/ordersOpen", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            return (JArray)WebRequest($"{ApiUri}/ordersOpen{query}", HttpMethod.Get);
         }
 
-        /**
-         * Returns all trades for a specific market
-         * @param market the market for which trades should be returned
-         * @param options optional parameters: limit, start, end, tradeIdFrom, tradeIdTo
-         * @return JArray trades, get individual trades by iterating over array: response.getJObject(index)
-         #1#
-        public JArray Trades(string market, JObject options)
+        public JArray Trades(string market, int limit, long start, long end, string tradeIdFrom, string tradeIdTo)
         {
-            options.Add("market", market);
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/trades", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(market), market);
+            AddQuery(ref query, nameof(limit), limit.ToString());
+            AddQuery(ref query, nameof(start), start.ToString());
+            AddQuery(ref query, nameof(end), end.ToString());
+            AddQuery(ref query, nameof(tradeIdFrom), tradeIdFrom);
+            AddQuery(ref query, nameof(tradeIdTo), tradeIdTo);
+            return (JArray)WebRequest($"{ApiUri}/trades{query}", HttpMethod.Get);
         }
 
-        /**
-         * Return the fee tier for an account
-         * @return JObject response, get taker fee through: response.getJObject("fees").getString("taker")
-         #1#
         public JObject Account()
         {
-            return PrivateRequest("/account", "", "GET", new JObject());
+            return (JObject)WebRequest($"{ApiUri}/options", HttpMethod.Get);
         }
 
-        /**
-         * Returns the balance for an account
-         * @param options optional parameters: symbol
-         * @return JArray response, get individual balances by iterating over array: response.getJObject(index)
-         #1#
-        public JArray Balance(JObject options)
+        public JArray Balance(string symbol)
         {
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/balance", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(symbol), symbol);
+            return (JArray)WebRequest($"{ApiUri}/options{query}", HttpMethod.Get);
         }
 
-        /**
-         * Returns the deposit address which can be used to increase the account balance
-         * @param symbol the crypto currency for which the address should be returned
-         * @return JObject response, get address through response.getString("address")
-         #1#
         public JObject DepositAssets(string symbol)
         {
-            var options = new JObject();
-            options.Add("symbol", symbol);
-            var postfix = CreatePostfix(options);
-            return PrivateRequest("/deposit", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(symbol), symbol);
+            return (JObject)WebRequest($"{ApiUri}/deposit{query}", HttpMethod.Get);
         }
 
-        /**
-         * Creates a withdrawal to another address
-         * @param symbol the crypto currency for which the withdrawal should be created
-         * @param amount the amount which should be withdrawn
-         * @param address The address to which the crypto should get sent
-         * @param body optional parameters: paymentId, internal, addWithdrawalFee
-         * @return JObject response, get success confirmation through response.getBoolean("success")
-         #1#
         public JObject WithdrawAssets(string symbol, string amount, string address, JObject body)
         {
             body.Add("symbol", symbol);
             body.Add("amount", amount);
             body.Add("address", address);
-            return PrivateRequest("/withdrawal", "", "POST", body);
+            return (JObject)WebRequest($"{ApiUri}/withdrawal", HttpMethod.Post, body);
         }
 
-        /**
-         * Returns the entire deposit history for an account
-         * @param options optional parameters: symbol, limit, start, end
-         * @return JArray response, get individual deposits by iterating over the array: response.getJObject(index)
-         #1#
-        public JArray DepositHistory(JObject options)
+        public JArray DepositHistory(string symbol, int limit, long start, long end)
         {
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/depositHistory", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(symbol), symbol);
+            AddQuery(ref query, nameof(limit), limit.ToString());
+            AddQuery(ref query, nameof(start), start.ToString());
+            AddQuery(ref query, nameof(end), end.ToString());
+            return (JArray)WebRequest($"{ApiUri}/depositHistory{query}", HttpMethod.Get);
         }
 
-        /**
-         * Returns the entire withdrawal history for an account
-         * @param options optional parameters: symbol, limit, start, end
-         * @return JArray response, get individual withdrawals by iterating over the array: response.getJObject(index)
-         #1#
-        public JArray WithdrawalHistory(JObject options)
+        public JArray WithdrawalHistory(string symbol, int limit, long start, long end)
         {
-            var postfix = CreatePostfix(options);
-            return PrivateRequestArray("/withdrawalHistory", postfix, "GET", new JObject());
+            var query = string.Empty;
+            AddQuery(ref query, nameof(symbol), symbol);
+            AddQuery(ref query, nameof(limit), limit.ToString());
+            AddQuery(ref query, nameof(start), start.ToString());
+            AddQuery(ref query, nameof(end), end.ToString());
+            return (JArray)WebRequest($"{ApiUri}/withdrawalHistory{query}", HttpMethod.Get);
         }
 
-        /**
+        /*/**
          * Creates a websocket object
          * @return Websocket the object on which all websocket function can be called.
          #1#
