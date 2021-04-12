@@ -27,10 +27,6 @@
         private bool RateLimitThreadStarted;
         private readonly bool Debugging;
 
-        private HttpClient Client { get; }
-
-        private WebSocket WebSocket { get; }
-
         /// <summary>
         /// Initializes a new instance of the <see cref="Bitvavo" /> class.
         /// </summary>
@@ -50,8 +46,6 @@
             ApiUri = !string.IsNullOrEmpty(apiUri) ? new Uri(apiUri) : ApiUri;
             SocketUri = !string.IsNullOrEmpty(socketUri) ? new Uri(socketUri) : SocketUri;
             Debugging = debugging;
-            Client = new HttpClient { BaseAddress = ApiUri };
-            WebSocket = new WebSocket(ApiKey, ApiSecret, AccessWindow, SocketUri.ToString(), this);
         }
 
         /// <summary>
@@ -235,25 +229,26 @@
         {
             try
             {
+                using var client = new HttpClient { BaseAddress = ApiUri };
                 var bodyString = jsonBody.ToString(Formatting.None);
                 if (!string.IsNullOrEmpty(ApiKey) && !string.IsNullOrEmpty(ApiSecret))
                 {
                     var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     var signature = CreateSignature(timestamp, method.ToString(), (urlString), bodyString);
-                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Key", ApiKey);
-                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Signature", signature);
-                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
-                    Client.DefaultRequestHeaders.Add("Bitvavo-Access-Window", AccessWindow.ToString());
+                    client.DefaultRequestHeaders.Add("Bitvavo-Access-Key", ApiKey);
+                    client.DefaultRequestHeaders.Add("Bitvavo-Access-Signature", signature);
+                    client.DefaultRequestHeaders.Add("Bitvavo-Access-Timestamp", timestamp.ToString());
+                    client.DefaultRequestHeaders.Add("Bitvavo-Access-Window", AccessWindow.ToString());
                 }
 
                 var request = new HttpRequestMessage(method, urlString)
                 {
                     Content = string.IsNullOrEmpty(bodyString)
-                                                    ? new StringContent("")
-                                                    : new StringContent(bodyString, Encoding.UTF8, "application/json"),
+                                  ? new StringContent("")
+                                  : new StringContent(bodyString, Encoding.UTF8, "application/json"),
                 };
 
-                var response = Client.SendAsync(request).Result;
+                var response = client.SendAsync(request).Result;
                 if (response.IsSuccessStatusCode)
                 {
                     UpdateRateLimit(response.Headers);
@@ -471,408 +466,6 @@
             AddQuery(ref query, nameof(start), start.ToString());
             AddQuery(ref query, nameof(end), end.ToString());
             return (JArray)WebRequest($"{ApiUri}/withdrawalHistory{query}", HttpMethod.Get);
-        }
-
-        public WebSocket NewWebsocket()
-        {
-            var webSocketClient = new WebSocket();
-            return webSocketClient;
-        }
-
-        void HandleBook(Runnable function)
-        {
-            function.run();
-        }
-
-        public void Close()
-        {
-            ws.closeSocket();
-        }
-
-        public void DoSendPublic(JObject options)
-        {
-            ws.sendMessage(options.toString());
-        }
-
-        public void DoSendPrivate(JObject options)
-        {
-            if (string.IsNullOrEmpty(ApiKey) || string.IsNullOrEmpty(ApiSecret))
-            {
-                ErrorToConsole("You forgot to set the key and secret, both are required for this functionality.");
-            }
-            else if (authenticated)
-            {
-                ws.sendMessage(options.toString());
-            }
-            else
-            {
-                try
-                {
-                    Thread.Sleep(50);
-                    DoSendPrivate(options);
-                }
-                catch (ThreadInterruptedException)
-                {
-                    ErrorToConsole("Interrupted, aborting send.");
-                }
-            }
-        }
-
-        public void SetErrorCallback(WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addErrorHandler(msgHandler);
-        }
-
-        public void Time(WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addTimeHandler(msgHandler);
-            DoSendPublic(new JObject("{ action: getTime }"));
-        }
-
-        public void Markets(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addMarketsHandler(msgHandler);
-            options.Add("action", "getMarkets");
-            DoSendPublic(options);
-        }
-
-        public void Assets(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addAssetsHandler(msgHandler);
-            options.Add("action", "getAssets");
-            DoSendPublic(options);
-        }
-
-
-        public void Book(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addBookHandler(msgHandler);
-            options.Add("action", "getBook");
-            options.Add("market", market);
-            DoSendPublic(options);
-        }
-
-
-        public void PublicTrades(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addTradesHandler(msgHandler);
-            options.Add("action", "getTrades");
-            options.Add("market", market);
-            DoSendPublic(options);
-        }
-
-
-        public void Candles(string market, string interval, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addCandlesHandler(msgHandler);
-            options.Add("action", "getCandles");
-            options.Add("market", market);
-            options.Add("interval", interval);
-            DoSendPublic(options);
-        }
-
-
-        public void Ticker24H(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addTicker24hHandler(msgHandler);
-            options.Add("action", "getTicker24h");
-            DoSendPublic(options);
-        }
-
-
-        public void TickerPrice(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addTickerPriceHandler(msgHandler);
-            options.Add("action", "getTickerPrice");
-            DoSendPublic(options);
-        }
-
-
-        public void TickerBook(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addTickerBookHandler(msgHandler);
-            options.Add("action", "getTickerBook");
-            DoSendPublic(options);
-        }
-
-
-        public void PlaceOrder(string market, string side, string orderType, JObject body, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addPlaceOrderHandler(msgHandler);
-            body.Add("market", market);
-            body.Add("side", side);
-            body.Add("orderType", orderType);
-            body.Add("action", "privateCreateOrder");
-            DoSendPrivate(body);
-        }
-
-
-        public void GetOrder(string market, string orderId, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addGetOrderHandler(msgHandler);
-            var options = new JObject();
-            options.Add("action", "privateGetOrder");
-            options.Add("market", market);
-            options.Add("orderId", orderId);
-            DoSendPrivate(options);
-        }
-
-
-        public void UpdateOrder(string market, string orderId, JObject body, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addUpdateOrderHandler(msgHandler);
-            body.Add("market", market);
-            body.Add("orderId", orderId);
-            body.Add("action", "privateUpdateOrder");
-            DoSendPrivate(body);
-        }
-
-
-        public void CancelOrder(string market, string orderId, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addCancelOrderHandler(msgHandler);
-            var options = new JObject();
-            options.Add("action", "privateCancelOrder");
-            options.Add("market", market);
-            options.Add("orderId", orderId);
-            DoSendPrivate(options);
-        }
-
-
-        public void GetOrders(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addGetOrdersHandler(msgHandler);
-            options.Add("action", "privateGetOrders");
-            options.Add("market", market);
-            DoSendPrivate(options);
-        }
-
-
-        public void CancelOrders(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addCancelOrdersHandler(msgHandler);
-            options.Add("action", "privateCancelOrders");
-            DoSendPrivate(options);
-        }
-
-
-        public void OrdersOpen(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addGetOrdersOpenHandler(msgHandler);
-            options.Add("action", "privateGetOrdersOpen");
-            DoSendPrivate(options);
-        }
-
-
-        public void Trades(string market, JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addGetTradesHandler(msgHandler);
-            options.Add("action", "privateGetTrades");
-            options.Add("market", market);
-            DoSendPrivate(options);
-        }
-
-
-        public void Account(WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addAccountHandler(msgHandler);
-            var options = new JObject("{ action: privateGetAccount }");
-            DoSendPrivate(options);
-        }
-
-
-        public void Balance(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addBalanceHandler(msgHandler);
-            options.Add("action", "privateGetBalance");
-            DoSendPrivate(options);
-        }
-
-
-        public void DepositAssets(string symbol, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addDepositAssetsHandler(msgHandler);
-            var options = new JObject("{ action: privateDepositAssets }");
-            options.Add("symbol", symbol);
-            DoSendPrivate(options);
-        }
-
-
-        public void WithdrawAssets(string symbol, string amount, string address, JObject body, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addWithdrawAssetsHandler(msgHandler);
-            body.Add("action", "privateWithdrawAssets");
-            body.Add("symbol", symbol);
-            body.Add("amount", amount);
-            body.Add("address", address);
-            DoSendPrivate(body);
-        }
-
-
-        public void DepositHistory(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addDepositHistoryHandler(msgHandler);
-            options.Add("action", "privateGetDepositHistory");
-            DoSendPrivate(options);
-        }
-
-
-        public void WithdrawalHistory(JObject options, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addWithdrawalHistoryHandler(msgHandler);
-            options.Add("action", "privateGetWithdrawalHistory");
-            DoSendPrivate(options);
-        }
-
-
-        public void SubscriptionTicker(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addSubscriptionTickerHandler(market, msgHandler);
-            var options = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "ticker");
-            subOptions.Add("markets", new string[] { market });
-            options.Add("action", "subscribe");
-            options.Add("channels", new JObject[] { subOptions });
-            activatedSubscriptionTicker = true;
-            if (optionsSubscriptionTicker == null)
-            {
-                optionsSubscriptionTicker = new JObject();
-            }
-            optionsSubscriptionTicker.Add(market, options);
-            DoSendPublic(options);
-        }
-
-
-        public void SubscriptionTicker24H(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addSubscriptionTicker24hHandler(market, msgHandler);
-            var options = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "ticker24h");
-            subOptions.Add("markets", new string[] { market });
-            options.Add("action", "subscribe");
-            options.Add("channels", new JObject[] { subOptions });
-            activatedSubscriptionTicker24h = true;
-            if (optionsSubscriptionTicker24h == null)
-            {
-                optionsSubscriptionTicker24h = new JObject();
-            }
-            optionsSubscriptionTicker24h.Add(market, options);
-            DoSendPublic(options);
-        }
-
-
-        public void SubscriptionAccount(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addSubscriptionAccountHandler(market, msgHandler);
-            var options = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "account");
-            subOptions.Add("markets", new string[] { market });
-            options.Add("action", "subscribe");
-            options.Add("channels", new JObject[] { subOptions });
-            activatedSubscriptionAccount = true;
-            if (optionsSubscriptionAccount == null)
-            {
-                optionsSubscriptionAccount = new JObject();
-            }
-            optionsSubscriptionAccount.Add(market, options);
-            DoSendPrivate(options);
-        }
-
-        public void SubscriptionCandles(string market, string interval, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addSubscriptionCandlesHandler(market, interval, msgHandler);
-            var options = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "candles");
-            subOptions.Add("interval", new string[] { interval });
-            subOptions.Add("markets", new string[] { market });
-            options.Add("action", "subscribe");
-            options.Add("channels", new JObject[] { subOptions });
-            activatedSubscriptionCandles = true;
-            var intervalIndex = new JObject();
-            intervalIndex.Add(interval, options);
-            if (optionsSubscriptionCandles == null)
-            {
-                optionsSubscriptionCandles = new JObject();
-            }
-            optionsSubscriptionCandles.Add(market, intervalIndex);
-            DoSendPublic(options);
-        }
-
-
-        public void SubscriptionTrades(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addSubscriptionTradesHandler(market, msgHandler);
-            var options = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "trades");
-            subOptions.Add("markets", new string[] { market });
-            options.Add("action", "subscribe");
-            options.Add("channels", new JObject[] { subOptions });
-            activatedSubscriptionTrades = true;
-            if (optionsSubscriptionTrades == null)
-            {
-                optionsSubscriptionTrades = new JObject();
-            }
-            optionsSubscriptionTrades.Add(market, options);
-            DoSendPublic(options);
-        }
-
-
-        public void SubscriptionBookUpdate(string market, WebsocketClientEndpoint.MessageHandler msgHandler)
-        {
-            ws.addSubscriptionBookUpdateHandler(market, msgHandler);
-            var options = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "book");
-            subOptions.Add("markets", new string[] { market });
-            options.Add("action", "subscribe");
-            options.Add("channels", new JObject[] { subOptions });
-            activatedSubscriptionBookUpdate = true;
-            if (optionsSubscriptionBookUpdate == null)
-            {
-                optionsSubscriptionBookUpdate = new JObject();
-            }
-            optionsSubscriptionBookUpdate.Add(market, options);
-            DoSendPublic(options);
-        }
-
-
-        public void SubscriptionBook(string market, WebsocketClientEndpoint.BookHandler msgHandler)
-        {
-            ws.keepBookCopy = true;
-            Map<string, object> bidsAsks = new HashMap<string, object>();
-            bidsAsks.Add("bids", new ArrayList<ArrayList<Float>>());
-            bidsAsks.Add("asks", new ArrayList<ArrayList<Float>>());
-
-            Book.Add(market, bidsAsks);
-            ws.addSubscriptionBookHandler(market, msgHandler);
-            var options = new JObject();
-            options.Add("action", "getBook");
-            options.Add("market", market);
-            activatedSubscriptionBook = true;
-            if (optionsSubscriptionBookFirst == null)
-            {
-                optionsSubscriptionBookFirst = new JObject();
-            }
-            optionsSubscriptionBookFirst.Add(market, options);
-            DoSendPublic(options);
-
-            var secondOptions = new JObject();
-            var subOptions = new JObject();
-            subOptions.Add("name", "book");
-            subOptions.Add("markets", new string[] { market });
-            secondOptions.Add("action", "subscribe");
-            secondOptions.Add("channels", new JObject[] { subOptions });
-            if (optionsSubscriptionBookSecond == null)
-            {
-                optionsSubscriptionBookSecond = new JObject();
-            }
-            optionsSubscriptionBookSecond.Add(market, secondOptions);
-            DoSendPublic(secondOptions);
         }
     }
 }
