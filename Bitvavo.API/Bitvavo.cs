@@ -29,6 +29,8 @@
 
         private HttpClient Client { get; }
 
+        private WebSocket WebSocket { get; }
+
         /// <summary>
         /// Initializes a new instance of the <see cref="Bitvavo" /> class.
         /// </summary>
@@ -49,6 +51,7 @@
             SocketUri = !string.IsNullOrEmpty(socketUri) ? new Uri(socketUri) : SocketUri;
             Debugging = debugging;
             Client = new HttpClient { BaseAddress = ApiUri };
+            WebSocket = new WebSocket(ApiKey, ApiSecret, AccessWindow, SocketUri.ToString(), this);
         }
 
         /// <summary>
@@ -470,14 +473,10 @@
             return (JArray)WebRequest($"{ApiUri}/withdrawalHistory{query}", HttpMethod.Get);
         }
 
-        /*/**
-         * Creates a websocket object
-         * @return Websocket the object on which all websocket function can be called.
-         #1#
-        public Websocket NewWebsocket()
+        public WebSocket NewWebsocket()
         {
-            websocketObject = new Websocket();
-            return websocketObject;
+            var webSocketClient = new WebSocket();
+            return webSocketClient;
         }
 
         void HandleBook(Runnable function)
@@ -874,6 +873,6 @@
             }
             optionsSubscriptionBookSecond.Add(market, secondOptions);
             DoSendPublic(secondOptions);
-        }*/
+        }
     }
 }
